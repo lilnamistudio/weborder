@@ -9,6 +9,8 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
   <script src="https://unpkg.com/lucide@latest"></script>
+  <!-- Supabase JS Client Library -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <style>
     :root {
       --c-pink: #E9899F;
@@ -244,7 +246,7 @@
           <div class="bg-white rounded-3xl border-2 border-[#E9899F]/30 p-4 retro-shadow-sm overflow-hidden">
             <div class="flex justify-between items-center mb-3">
               <h3 class="font-brand text-base text-[#D9574F]">Manajemen Produk & Variasi Paket</h3>
-              <span class="text-xs text-stone-400">Semua perubahan langsung live</span>
+              <span class="text-xs text-stone-400">Database Supabase Live Cloud</span>
             </div>
             <div class="overflow-x-auto">
               <table class="w-full text-xs text-left">
@@ -306,9 +308,6 @@
                 </h3>
                 <p class="text-[11px] text-stone-500">Pengingat H-7 otomatis, perpanjangan durasi tanpa menghapus histori lama.</p>
               </div>
-              <button onclick="openNewSubscriptionModal()" class="text-xs font-bold px-3 py-1.5 rounded-xl bg-[#8FA477] text-white hover:bg-[#7e9167] transition flex items-center gap-1">
-                <i data-lucide="plus" class="w-3.5 h-3.5"></i> Catat Langganan Manual
-              </button>
             </div>
             <div class="overflow-x-auto">
               <table class="w-full text-xs text-left">
@@ -508,7 +507,6 @@
 
         <!-- Checkout Section -->
         <div id="cart-checkout-section" class="border-t border-stone-200 pt-3 space-y-3">
-          <!-- Metode Pembayaran Badge -->
           <div class="bg-[#8FA477]/15 p-2 rounded-xl text-center border border-[#8FA477]/30 text-[11px] font-bold text-[#4d5e3c]">
             💳 Pembayaran: QRIS & Bank BCA Only
           </div>
@@ -555,7 +553,7 @@
         </div>
 
         <p class="text-xs text-stone-600">
-          Copy seluruh data pricelist ke dalam format JSON/CSV di bawah ini untuk mengupdate katalog secara otomatis.
+          Copy seluruh data pricelist ke dalam format JSON/CSV di bawah ini untuk mengupdate katalog secara otomatis ke database Supabase.
         </p>
 
         <div class="space-y-2">
@@ -692,14 +690,18 @@
 
   <script>
     // ==========================================
-    // INITIAL DATABASE / STATE (Editable In-App)
+    // SUPABASE LIVE DATABASE CONNECTION
     // ==========================================
+    const SUPABASE_URL = 'https://nypsejsidrazsvknbxbp.supabase.co';
+    const SUPABASE_ANON_KEY = 'sb_publishable_igNzf5uBNCljB4JzCLkx-w_C4VqF-p5';
+    const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+    // Initial State Fallbacks
     const DEFAULT_SETTINGS = {
       storeName: 'Little Digital Shop',
       tagline: 'Your favorite digital essentials, all in one place. Terpercaya sejak 2022.',
       whatsapp: '6285163672392',
-      announcement: 'Terpercaya Sejak 2022 • Koleksi produk digital favoritmu di Little Digital Shop! 🍓',
-      isOpen: true
+      announcement: 'Terpercaya Sejak 2022 • Koleksi produk digital favoritmu di Little Digital Shop! 🍓'
     };
 
     const DEFAULT_PRODUCTS = [
@@ -761,24 +763,8 @@
       }
     ];
 
-    const DEFAULT_SUBSCRIPTIONS = [
-      {
-        id: 'sub-1',
-        orderNumber: 'LDS-20261101-0021',
-        customerName: 'Aulia Rahma',
-        customerWhatsApp: '6281234567890',
-        productName: 'Netflix Premium UHD',
-        packageName: '1 Bulan (Shared 1 Device)',
-        activationDate: '2026-10-10',
-        expiryDate: '2026-11-09',
-        renewalCount: 1,
-        status: 'Upcoming Renewal',
-        adminNotes: 'Profil Pinky PIN 1234'
-      }
-    ];
-
-    // Local Storage Helpers
-    const getDB = (key, fallback) => {
+    // Local Storage Cache Helpers
+    const getLocalDB = (key, fallback) => {
       try {
         const val = localStorage.getItem(`lds_${key}`);
         return val ? JSON.parse(val) : fallback;
@@ -786,16 +772,16 @@
         return fallback;
       }
     };
-    const setDB = (key, val) => {
+    const setLocalDB = (key, val) => {
       localStorage.setItem(`lds_${key}`, JSON.stringify(val));
     };
 
     // App State
-    let settings = getDB('settings', DEFAULT_SETTINGS);
-    let products = getDB('products', DEFAULT_PRODUCTS);
-    let orders = getDB('orders', []);
-    let subscriptions = getDB('subscriptions', DEFAULT_SUBSCRIPTIONS);
-    let stockMovements = getDB('stock_movements', []);
+    let settings = getLocalDB('settings', DEFAULT_SETTINGS);
+    let products = getLocalDB('products', DEFAULT_PRODUCTS);
+    let orders = getLocalDB('orders', []);
+    let subscriptions = getLocalDB('subscriptions', []);
+    let stockMovements = getLocalDB('stock_movements', []);
     let cart = [];
     let currentView = 'store';
     let selectedCategory = 'Semua';
@@ -807,15 +793,123 @@
     let isAdminAuthenticated = false;
 
     // ==========================================
-    // INITIALIZATION & LUCIDE ICONS
+    // INITIALIZATION & SUPABASE SYNC
     // ==========================================
-    document.addEventListener('DOMContentLoaded', () => {
+    document.addEventListener('DOMContentLoaded', async () => {
       refreshLucide();
       applySettings();
       renderCategoryPills();
       renderProducts();
       updateCartBadge();
+      
+      // Ambil data live dari Supabase
+      await fetchAllFromSupabase();
     });
+
+    async function fetchAllFromSupabase() {
+      try {
+        // 1. Fetch Settings
+        const { data: sData } = await supabase.from('store_settings').select('*').limit(1).maybeSingle();
+        if (sData) {
+          settings = {
+            storeName: sData.store_name || settings.storeName,
+            tagline: sData.tagline || settings.tagline,
+            whatsapp: sData.whatsapp_number || settings.whatsapp,
+            announcement: sData.announcement || settings.announcement
+          };
+          setLocalDB('settings', settings);
+          applySettings();
+        }
+
+        // 2. Fetch Products
+        const { data: pData } = await supabase.from('products').select('*').order('created_at', { ascending: false });
+        if (pData && pData.length > 0) {
+          products = pData.map(p => ({
+            id: p.id,
+            name: p.name,
+            category: p.category,
+            icon: p.icon || '🍓',
+            description: p.description || '',
+            terms: p.terms || '',
+            stockMode: p.stock_mode || 'unlimited',
+            stock: p.stock || 0,
+            packages: p.packages || []
+          }));
+          setLocalDB('products', products);
+        } else if (products.length > 0) {
+          // Inisialisasi awal ke supabase jika tabel masih kosong
+          for (const item of products) {
+            await supabase.from('products').insert([{
+              name: item.name,
+              category: item.category,
+              icon: item.icon,
+              description: item.description,
+              terms: item.terms,
+              stock_mode: item.stockMode,
+              stock: item.stock,
+              packages: item.packages
+            }]);
+          }
+        }
+
+        // 3. Fetch Orders
+        const { data: oData } = await supabase.from('orders').select('*').order('created_at', { ascending: false });
+        if (oData) {
+          orders = oData.map(o => ({
+            id: o.id,
+            orderNumber: o.order_number,
+            customerName: o.customer_name,
+            customerWhatsApp: o.customer_whatsapp,
+            notes: o.notes,
+            items: o.items,
+            total: o.total,
+            status: o.status,
+            stockDeducted: o.stock_deducted,
+            createdAt: o.created_at
+          }));
+          setLocalDB('orders', orders);
+        }
+
+        // 4. Fetch Subscriptions
+        const { data: subData } = await supabase.from('subscriptions').select('*').order('created_at', { ascending: false });
+        if (subData) {
+          subscriptions = subData.map(s => ({
+            id: s.id,
+            orderNumber: s.order_number,
+            customerName: s.customer_name,
+            customerWhatsApp: s.customer_whatsapp,
+            productName: s.product_name,
+            packageName: s.package_name,
+            activationDate: s.activation_date,
+            expiryDate: s.expiry_date,
+            renewalCount: s.renewal_count,
+            status: s.status,
+            adminNotes: s.admin_notes
+          }));
+          setLocalDB('subscriptions', subscriptions);
+        }
+
+        // 5. Fetch Stock Movements
+        const { data: stData } = await supabase.from('stock_movements').select('*').order('created_at', { ascending: false });
+        if (stData) {
+          stockMovements = stData.map(st => ({
+            id: st.id,
+            productName: st.product_name,
+            change: st.change_amount,
+            finalStock: st.final_stock,
+            reason: st.reason,
+            time: new Date(st.created_at).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })
+          }));
+          setLocalDB('stock_movements', stockMovements);
+        }
+
+        renderCategoryPills();
+        renderProducts();
+        if (currentView === 'admin') renderAdminDashboard();
+      } catch (err) {
+        console.warn('Gagal koneksi realtime Supabase, memakai data lokal:', err);
+      }
+    }
 
     function refreshLucide() {
       if (window.lucide) {
@@ -970,9 +1064,11 @@
 
       emptyState.classList.add('hidden');
       grid.innerHTML = filtered.map(p => {
-        const lowestPrice = Math.min(...p.packages.map(pkg => pkg.promoPrice || pkg.price));
-        const originalPrice = p.packages[0]?.price;
-        const hasPromo = p.packages.some(pkg => pkg.promoPrice && pkg.promoPrice < pkg.price);
+        const lowestPrice = p.packages && p.packages.length > 0 
+          ? Math.min(...p.packages.map(pkg => pkg.promoPrice || pkg.price))
+          : 0;
+        const originalPrice = p.packages && p.packages.length > 0 ? p.packages[0]?.price : 0;
+        const hasPromo = p.packages && p.packages.some(pkg => pkg.promoPrice && pkg.promoPrice < pkg.price);
         
         let stockLabel = '';
         let isOutOfStock = false;
@@ -1068,6 +1164,11 @@
 
     function renderModalPackages() {
       const container = document.getElementById('modal-packages-list');
+      if (!activeModalProduct.packages || activeModalProduct.packages.length === 0) {
+        container.innerHTML = '<p class="text-xs text-stone-400">Tidak ada variasi paket tersedia.</p>';
+        return;
+      }
+
       container.innerHTML = activeModalProduct.packages.map((pkg, idx) => {
         const isSelected = idx === selectedPackageIndex;
         const currentPrice = pkg.promoPrice || pkg.price;
@@ -1219,7 +1320,7 @@
       return `LDS-${datePart}-${randomSuffix}`;
     }
 
-    function executeWhatsAppCheckout() {
+    async function executeWhatsAppCheckout() {
       const custName = document.getElementById('cust-name').value.trim();
       const custWa = document.getElementById('cust-wa').value.trim();
       const custNotes = document.getElementById('cust-notes').value.trim();
@@ -1249,7 +1350,6 @@
         };
       });
 
-      // Simpan ke Orders State
       const newOrder = {
         orderNumber,
         customerName: custName,
@@ -1263,9 +1363,24 @@
       };
 
       orders.unshift(newOrder);
-      setDB('orders', orders);
+      setLocalDB('orders', orders);
 
-      // Siapkan Format Pesan WhatsApp
+      // Simpan langsung ke Supabase
+      try {
+        await supabase.from('orders').insert([{
+          order_number: orderNumber,
+          customer_name: custName,
+          customer_whatsapp: custWa,
+          notes: custNotes || '-',
+          items: orderItemsSnapshot,
+          total: grandTotal,
+          status: 'Pending',
+          stock_deducted: false
+        }]);
+      } catch (e) {
+        console.error('Gagal sinkron order ke Supabase:', e);
+      }
+
       let msg = `🍓 *ORDER BARU: LITTLE DIGITAL SHOP* 🍓\n`;
       msg += `━━━━━━━━━━━━━━━━━━━━━\n`;
       msg += `*Order ID:* ${orderNumber}\n`;
@@ -1287,12 +1402,10 @@
       msg += `━━━━━━━━━━━━━━━━━━━━━\n`;
       msg += `Halo Admin hi.littlenami! Saya mau konfirmasi pesanan di atas. Mohon info nomor rekening BCA / QRIS pembayarannya ya. Terima kasih! 🍓✨`;
 
-      // Reset cart
       cart = [];
       updateCartBadge();
       closeCart();
 
-      // Buka Link WhatsApp
       const waUrl = `https://wa.me/${settings.whatsapp}?text=${encodeURIComponent(msg)}`;
       window.open(waUrl, '_blank');
     }
@@ -1367,7 +1480,7 @@
               ${p.stockMode === 'unlimited' ? '∞' : p.stock}
             </td>
             <td class="p-2.5">
-              <span class="text-[11px] text-stone-600">${p.packages.length} variasi harga</span>
+              <span class="text-[11px] text-stone-600">${p.packages ? p.packages.length : 0} variasi</span>
             </td>
             <td class="p-2.5">
               <span class="text-[10px] font-bold text-[#8FA477]">Aktif</span>
@@ -1403,7 +1516,7 @@
           'Cancelled': 'bg-red-100 text-red-600'
         };
 
-        const itemsSummary = ord.items.map(i => `${i.productName} (${i.packageName})`).join(', ');
+        const itemsSummary = (ord.items || []).map(i => `${i.productName} (${i.packageName})`).join(', ');
 
         return `
           <tr class="hover:bg-stone-50">
@@ -1437,48 +1550,64 @@
       refreshLucide();
     }
 
-    function updateOrderStatus(orderNumber, newStatus) {
+    async function updateOrderStatus(orderNumber, newStatus) {
       const order = orders.find(o => o.orderNumber === orderNumber);
       if (!order) return;
 
       order.status = newStatus;
 
       if ((newStatus === 'Processing' || newStatus === 'Completed') && !order.stockDeducted) {
-        order.items.forEach(item => {
+        for (const item of (order.items || [])) {
           const prod = products.find(p => p.id === item.productId);
           if (prod && (prod.stockMode === 'automatic' || prod.stockMode === 'manual')) {
             const prev = prod.stock;
             prod.stock = Math.max(0, prod.stock - item.quantity);
-            recordStockMovement(prod.id, prod.name, -item.quantity, prev, prod.stock, `Order ${orderNumber} (${newStatus})`);
+            recordStockMovement(prod.name, -item.quantity, prod.stock, `Order ${orderNumber} (${newStatus})`);
+            
+            // Update live stock to Supabase
+            if (prod.id && !prod.id.startsWith('prod-')) {
+              await supabase.from('products').update({ stock: prod.stock }).eq('id', prod.id);
+            }
           }
 
           if (item.durationDays && item.durationDays < 9000) {
             autoRegisterSubscription(order, item);
           }
-        });
+        }
         order.stockDeducted = true;
       }
 
       if (newStatus === 'Cancelled' && order.stockDeducted) {
-        order.items.forEach(item => {
+        for (const item of (order.items || [])) {
           const prod = products.find(p => p.id === item.productId);
           if (prod && (prod.stockMode === 'automatic' || prod.stockMode === 'manual')) {
             const prev = prod.stock;
             prod.stock += item.quantity;
-            recordStockMovement(prod.id, prod.name, item.quantity, prev, prod.stock, `Restock Pembatalan Order ${orderNumber}`);
+            recordStockMovement(prod.name, item.quantity, prod.stock, `Restock Pembatalan Order ${orderNumber}`);
+            
+            if (prod.id && !prod.id.startsWith('prod-')) {
+              await supabase.from('products').update({ stock: prod.stock }).eq('id', prod.id);
+            }
           }
-        });
+        }
         order.stockDeducted = false;
       }
 
-      setDB('orders', orders);
-      setDB('products', products);
+      setLocalDB('orders', orders);
+      setLocalDB('products', products);
+
+      // Update to Supabase live
+      await supabase.from('orders').update({
+        status: newStatus,
+        stock_deducted: order.stockDeducted
+      }).eq('order_number', orderNumber);
+
       renderAdminDashboard();
     }
 
-    function recordStockMovement(productId, productName, change, prev, next, reason) {
+    async function recordStockMovement(productName, change, next, reason) {
       const log = {
-        id: `stk_${Date.now()}_${Math.random()}`,
+        id: `stk_${Date.now()}`,
         time: new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }),
         productName,
         change,
@@ -1486,7 +1615,18 @@
         reason
       };
       stockMovements.unshift(log);
-      setDB('stock_movements', stockMovements);
+      setLocalDB('stock_movements', stockMovements);
+
+      try {
+        await supabase.from('stock_movements').insert([{
+          product_name: productName,
+          change_amount: change,
+          final_stock: next,
+          reason
+        }]);
+      } catch (e) {
+        console.error(e);
+      }
     }
 
     function renderAdminStockAuditTable() {
@@ -1515,13 +1655,13 @@
     // ==========================================
     // RENEWAL TRACKER ENGINE
     // ==========================================
-    function autoRegisterSubscription(order, item) {
+    async function autoRegisterSubscription(order, item) {
       const now = new Date();
       const exp = new Date();
       exp.setDate(exp.getDate() + item.durationDays);
 
       const sub = {
-        id: `sub_${Date.now()}_${Math.random()}`,
+        id: `sub_${Date.now()}`,
         orderNumber: order.orderNumber,
         customerName: order.customerName,
         customerWhatsApp: order.customerWhatsApp,
@@ -1535,7 +1675,24 @@
       };
 
       subscriptions.unshift(sub);
-      setDB('subscriptions', subscriptions);
+      setLocalDB('subscriptions', subscriptions);
+
+      try {
+        await supabase.from('subscriptions').insert([{
+          order_number: order.orderNumber,
+          customer_name: order.customerName,
+          customer_whatsapp: order.customerWhatsApp,
+          product_name: item.productName,
+          package_name: item.packageName,
+          activation_date: sub.activationDate,
+          expiry_date: sub.expiryDate,
+          renewal_count: 0,
+          status: 'Active',
+          admin_notes: 'Aktivasi otomatis dari checkout'
+        }]);
+      } catch (e) {
+        console.error(e);
+      }
     }
 
     function renderAdminRenewalsTable() {
@@ -1608,7 +1765,7 @@
       document.getElementById('renewal-modal').classList.add('hidden');
     }
 
-    function submitRenewalExtension(e) {
+    async function submitRenewalExtension(e) {
       e.preventDefault();
       const subId = document.getElementById('renewal-sub-id').value;
       const days = parseInt(document.getElementById('renewal-days-added').value) || 30;
@@ -1623,14 +1780,25 @@
         sub.adminNotes = note || sub.adminNotes;
         sub.status = 'Active';
 
-        setDB('subscriptions', subscriptions);
+        setLocalDB('subscriptions', subscriptions);
+
+        // Update to Supabase
+        if (sub.id && !sub.id.startsWith('sub_')) {
+          await supabase.from('subscriptions').update({
+            expiry_date: sub.expiryDate,
+            renewal_count: sub.renewalCount,
+            admin_notes: sub.adminNotes,
+            status: 'Active'
+          }).eq('id', sub.id);
+        }
+
         closeRenewalModal();
         renderAdminDashboard();
       }
     }
 
     // ==========================================
-    // MASS IMPORTER (JSON & CSV)
+    // MASS IMPORTER (JSON & CSV TO SUPABASE)
     // ==========================================
     function openImportModal() {
       document.getElementById('import-modal').classList.remove('hidden');
@@ -1667,7 +1835,7 @@ Vidio Platinum,Streaming & Video,⚽,Nonton Liga Inggris & BRI Liga 1,Akun share
       document.getElementById('import-raw-text').value = sampleCsv;
     }
 
-    function processBulkImport() {
+    async function processBulkImport() {
       const raw = document.getElementById('import-raw-text').value.trim();
       if (!raw) {
         alert('Mohon masukkan format JSON atau CSV terlebih dahulu!');
@@ -1675,44 +1843,40 @@ Vidio Platinum,Streaming & Video,⚽,Nonton Liga Inggris & BRI Liga 1,Akun share
       }
 
       try {
+        let importedList = [];
         if (raw.startsWith('[') || raw.startsWith('{')) {
           const parsed = JSON.parse(raw);
           const list = Array.isArray(parsed) ? parsed : [parsed];
 
-          list.forEach(item => {
-            const newProd = {
-              id: `prod_imp_${Date.now()}_${Math.random()}`,
-              name: item.name || 'Produk Baru',
-              category: item.category || 'Lainnya',
-              icon: item.icon || '🍓',
-              description: item.description || '',
-              terms: item.terms || '',
-              stockMode: item.stock_mode || 'unlimited',
-              stock: parseInt(item.stock) || 0,
-              packages: (item.packages || []).map((pkg, idx) => ({
-                id: `pkg_imp_${idx}_${Date.now()}`,
-                name: pkg.name || 'Paket Standar',
-                days: parseInt(pkg.days) || 30,
-                price: parseFloat(pkg.price) || 0,
-                promoPrice: pkg.promo_price ? parseFloat(pkg.promo_price) : null
-              }))
-            };
-            if (newProd.packages.length === 0) {
-              newProd.packages.push({ id: `pkg_def_${Date.now()}`, name: '1 Bulan Standar', days: 30, price: 10000, promoPrice: null });
-            }
-            products.unshift(newProd);
-          });
+          importedList = list.map(item => ({
+            name: item.name || 'Produk Baru',
+            category: item.category || 'Lainnya',
+            icon: item.icon || '🍓',
+            description: item.description || '',
+            terms: item.terms || '',
+            stock_mode: item.stock_mode || 'unlimited',
+            stock: parseInt(item.stock) || 0,
+            packages: (item.packages || []).map((pkg, idx) => ({
+              id: `pkg_imp_${idx}_${Date.now()}`,
+              name: pkg.name || 'Paket Standar',
+              days: parseInt(pkg.days) || 30,
+              price: parseFloat(pkg.price) || 0,
+              promoPrice: pkg.promo_price ? parseFloat(pkg.promo_price) : null
+            }))
+          }));
         } else {
           const lines = raw.split('\n').filter(l => l.trim().length > 0);
           if (lines.length <= 1) throw new Error('Data CSV kosong');
 
           const header = lines[0].split(',').map(h => h.trim().toLowerCase());
+          const mapProds = {};
+
           for (let i = 1; i < lines.length; i++) {
             const cols = lines[i].split(',').map(c => c.trim());
             const row = {};
             header.forEach((h, idx) => row[h] = cols[idx] || '');
 
-            const existing = products.find(p => p.name.toLowerCase() === (row['name'] || '').toLowerCase());
+            const pName = row['name'] || 'Produk Baru';
             const newPkg = {
               id: `pkg_csv_${Date.now()}_${i}`,
               name: row['package_name'] || 'Paket Standar',
@@ -1721,30 +1885,48 @@ Vidio Platinum,Streaming & Video,⚽,Nonton Liga Inggris & BRI Liga 1,Akun share
               promoPrice: row['promo_price'] ? parseFloat(row['promo_price']) : null
             };
 
-            if (existing) {
-              existing.packages.push(newPkg);
+            if (mapProds[pName]) {
+              mapProds[pName].packages.push(newPkg);
             } else {
-              products.unshift({
-                id: `prod_csv_${Date.now()}_${i}`,
-                name: row['name'] || 'Produk Baru',
+              mapProds[pName] = {
+                name: pName,
                 category: row['category'] || 'Umum',
                 icon: row['icon'] || '🍓',
                 description: row['description'] || '',
                 terms: row['terms'] || '',
-                stockMode: row['stock_mode'] || 'unlimited',
+                stock_mode: row['stock_mode'] || 'unlimited',
                 stock: parseInt(row['stock']) || 0,
                 packages: [newPkg]
-              });
+              };
             }
+          }
+          importedList = Object.values(mapProds);
+        }
+
+        // Simpan langsung ke Supabase
+        for (const item of importedList) {
+          const { data } = await supabase.from('products').insert([item]).select();
+          if (data && data[0]) {
+            products.unshift({
+              id: data[0].id,
+              name: data[0].name,
+              category: data[0].category,
+              icon: data[0].icon,
+              description: data[0].description,
+              terms: data[0].terms,
+              stockMode: data[0].stock_mode,
+              stock: data[0].stock,
+              packages: data[0].packages
+            });
           }
         }
 
-        setDB('products', products);
+        setLocalDB('products', products);
         closeImportModal();
         renderCategoryPills();
         renderProducts();
         renderAdminDashboard();
-        alert('Seluruh data berhasil diimpor ke katalog Little Digital Shop! 🍓');
+        alert('Seluruh data berhasil diimpor langsung ke Supabase Cloud! 🍓');
       } catch (err) {
         alert('Gagal memproses data: Pastikan format JSON/CSV sudah benar sesuai contoh.');
         console.error(err);
@@ -1752,7 +1934,7 @@ Vidio Platinum,Streaming & Video,⚽,Nonton Liga Inggris & BRI Liga 1,Akun share
     }
 
     // ==========================================
-    // PRODUCT EDITOR MODAL (CRUD)
+    // PRODUCT EDITOR MODAL (CRUD VIA SUPABASE)
     // ==========================================
     function openProductModal() {
       document.getElementById('editor-title').textContent = 'Tambah Produk Baru';
@@ -1824,13 +2006,13 @@ Vidio Platinum,Streaming & Video,⚽,Nonton Liga Inggris & BRI Liga 1,Akun share
 
       const container = document.getElementById('editor-packages-container');
       container.innerHTML = '';
-      prod.packages.forEach(pkg => addPackageRow(pkg));
+      (prod.packages || []).forEach(pkg => addPackageRow(pkg));
 
       document.getElementById('product-editor-modal').classList.remove('hidden');
       refreshLucide();
     }
 
-    function saveProductForm(e) {
+    async function saveProductForm(e) {
       e.preventDefault();
       const prodId = document.getElementById('edit-prod-id').value;
       const name = document.getElementById('edit-prod-name').value;
@@ -1862,7 +2044,19 @@ Vidio Platinum,Streaming & Video,⚽,Nonton Liga Inggris & BRI Liga 1,Akun share
         return;
       }
 
-      if (prodId) {
+      if (prodId && !prodId.startsWith('prod-')) {
+        // Update di Supabase
+        await supabase.from('products').update({
+          name,
+          icon,
+          category,
+          stock_mode: stockMode,
+          stock,
+          description: desc,
+          terms,
+          packages
+        }).eq('id', prodId);
+
         const p = products.find(x => x.id === prodId);
         if (p) {
           p.name = name;
@@ -1875,31 +2069,47 @@ Vidio Platinum,Streaming & Video,⚽,Nonton Liga Inggris & BRI Liga 1,Akun share
           p.packages = packages;
         }
       } else {
-        const newProduct = {
-          id: `prod_${Date.now()}`,
+        // Insert Baru ke Supabase
+        const { data, error } = await supabase.from('products').insert([{
           name,
           icon,
           category,
-          stockMode,
+          stock_mode: stockMode,
           stock,
           description: desc,
           terms,
           packages
-        };
-        products.unshift(newProduct);
+        }]).select();
+
+        if (data && data[0]) {
+          products.unshift({
+            id: data[0].id,
+            name,
+            icon,
+            category,
+            stockMode,
+            stock,
+            description: desc,
+            terms,
+            packages
+          });
+        }
       }
 
-      setDB('products', products);
+      setLocalDB('products', products);
       closeProductEditorModal();
       renderCategoryPills();
       renderProducts();
       renderAdminDashboard();
     }
 
-    function deleteProduct(productId) {
+    async function deleteProduct(productId) {
       if (confirm('Yakin ingin menghapus produk ini dari katalog?')) {
+        if (!productId.startsWith('prod-')) {
+          await supabase.from('products').delete().eq('id', productId);
+        }
         products = products.filter(p => p.id !== productId);
-        setDB('products', products);
+        setLocalDB('products', products);
         renderCategoryPills();
         renderProducts();
         renderAdminDashboard();
@@ -1907,18 +2117,30 @@ Vidio Platinum,Streaming & Video,⚽,Nonton Liga Inggris & BRI Liga 1,Akun share
     }
 
     // ==========================================
-    // STORE SETTINGS
+    // STORE SETTINGS TO SUPABASE
     // ==========================================
-    function saveStoreSettings(e) {
+    async function saveStoreSettings(e) {
       e.preventDefault();
       settings.storeName = document.getElementById('setting-store-name').value;
       settings.tagline = document.getElementById('setting-tagline').value;
       settings.whatsapp = document.getElementById('setting-whatsapp').value;
       settings.announcement = document.getElementById('setting-announcement').value;
 
-      setDB('settings', settings);
+      setLocalDB('settings', settings);
       applySettings();
-      alert('Pengaturan toko berhasil diperbarui! 🍓');
+
+      try {
+        await supabase.from('store_settings').update({
+          store_name: settings.storeName,
+          tagline: settings.tagline,
+          whatsapp_number: settings.whatsapp,
+          announcement: settings.announcement
+        }).neq('id', '00000000-0000-0000-0000-000000000000');
+      } catch (err) {
+        console.error(err);
+      }
+
+      alert('Pengaturan toko berhasil diperbarui ke Supabase! 🍓');
     }
   </script>
 </body>
