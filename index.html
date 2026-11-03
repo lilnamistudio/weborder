@@ -98,7 +98,7 @@
         <div class="flex gap-2">
           <button type="button" onclick="showStoreView()" class="text-xs font-bold px-3 py-1.5 rounded-xl bg-stone-100 text-stone-600 border">Keluar</button>
           <button type="button" onclick="openImportPopup()" class="text-xs font-bold px-3 py-1.5 rounded-xl bg-[#EFC653] text-[#714f08]">Import JSON</button>
-          <button type="button" onclick="openNewProductPopup()" class="text-xs font-bold px-3 py-1.5 rounded-xl bg-[#D9574F] text-white">+ Produk</button>
+          <button type="button" onclick="openProductEditor()" class="text-xs font-bold px-3 py-1.5 rounded-xl bg-[#D9574F] text-white">+ Produk</button>
         </div>
       </div>
 
@@ -109,6 +109,7 @@
             <tr>
               <th class="p-2.5">Produk</th>
               <th class="p-2.5">Kategori</th>
+              <th class="p-2.5">Stok</th>
               <th class="p-2.5">Variasi</th>
               <th class="p-2.5 text-right">Aksi</th>
             </tr>
@@ -118,6 +119,72 @@
       </div>
     </div>
   </main>
+
+  <!-- Modal Tambah / Edit Produk (Lengkap dengan Varian & Stok) -->
+  <div id="product-editor-modal" class="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4 hidden">
+    <div class="bg-white w-full max-w-lg rounded-3xl p-5 space-y-3 max-h-[90vh] overflow-y-auto text-xs">
+      <div class="flex justify-between items-center border-b pb-2">
+        <h3 id="editor-modal-title" class="font-brand text-base text-[#D9574F] font-bold">Tambah Produk Baru</h3>
+        <button type="button" onclick="closeProductEditor()" class="text-stone-400 font-bold p-1">✕</button>
+      </div>
+      <form id="product-form" onsubmit="saveProduct(event)" class="space-y-3">
+        <input type="hidden" id="edit-prod-id" />
+        
+        <div class="grid grid-cols-3 gap-2">
+          <div class="col-span-2">
+            <label class="font-bold text-stone-700 block mb-1">Nama Produk *</label>
+            <input type="text" id="form-name" required placeholder="cth: Netflix, Zoom Pro" class="w-full p-2 border rounded-xl" />
+          </div>
+          <div>
+            <label class="font-bold text-stone-700 block mb-1">Emoji Ikon</label>
+            <input type="text" id="form-icon" placeholder="🍓" class="w-full p-2 text-center border rounded-xl" />
+          </div>
+        </div>
+
+        <div class="grid grid-cols-2 gap-2">
+          <div>
+            <label class="font-bold text-stone-700 block mb-1">Kategori *</label>
+            <input type="text" id="form-category" required placeholder="cth: Streaming & TV" class="w-full p-2 border rounded-xl" />
+          </div>
+          <div>
+            <label class="font-bold text-stone-700 block mb-1">Mode Stok</label>
+            <select id="form-stock-mode" onchange="toggleStockField()" class="w-full p-2 border rounded-xl">
+              <option value="unlimited">Unlimited (Tanpa Batas)</option>
+              <option value="manual">Manual (Isi Angka)</option>
+            </select>
+          </div>
+        </div>
+
+        <div id="form-stock-wrapper" class="hidden">
+          <label class="font-bold text-stone-700 block mb-1">Jumlah Stok Tersedia</label>
+          <input type="number" id="form-stock-count" min="0" value="0" class="w-full p-2 border rounded-xl" />
+        </div>
+
+        <div>
+          <label class="font-bold text-stone-700 block mb-1">Deskripsi Singkat</label>
+          <textarea id="form-desc" rows="2" placeholder="Keterangan produk, garansi, keunggulan..." class="w-full p-2 border rounded-xl"></textarea>
+        </div>
+
+        <!-- Dynamic Packages Section -->
+        <div class="border-t pt-3 space-y-2">
+          <div class="flex justify-between items-center">
+            <label class="font-bold text-stone-700">Daftar Variasi / Paket:</label>
+            <button type="button" onclick="addPackageRow()" class="px-2.5 py-1 rounded-lg bg-[#8FA477] text-white font-bold text-[11px] active:scale-95">
+              + Tambah Paket
+            </button>
+          </div>
+          <div id="package-rows-container" class="space-y-2">
+            <!-- Paket dinamis diinjeksi lewat JS -->
+          </div>
+        </div>
+
+        <div class="flex gap-2 pt-3 border-t">
+          <button type="button" onclick="closeProductEditor()" class="flex-1 py-2.5 rounded-xl border font-bold text-stone-600">Batal</button>
+          <button type="submit" class="flex-1 py-2.5 rounded-xl bg-[#D9574F] text-white font-brand font-bold text-xs hover:bg-[#c44a42]">Simpan Produk 🍓</button>
+        </div>
+      </form>
+    </div>
+  </div>
 
   <!-- Detail Product Modal -->
   <div id="detail-modal" class="fixed inset-0 z-50 bg-black/40 flex items-end md:items-center justify-center p-0 md:p-4 hidden">
@@ -193,7 +260,7 @@
       renderCategories();
       renderProductCards();
       
-      // Ambil data dari Supabase jika ada
+      // Ambil data real-time dari Supabase
       if (sb) {
         try {
           const { data } = await sb.from('products').select('*').order('created_at', { ascending: false });
@@ -209,7 +276,6 @@
       }
     });
 
-    // Handle Admin Switch (Prompt langsung tanpa modal yang rentan macet)
     function handleAdminClick() {
       if (isAdmin) {
         showStoreView();
@@ -279,13 +345,20 @@
 
       grid.innerHTML = filtered.map(p => {
         const minPrice = (p.packages && p.packages.length > 0) ? Math.min(...p.packages.map(x => x.price)) : 0;
+        let stockTag = '';
+        if (p.stock_mode === 'manual') {
+          stockTag = `<span class="text-[9px] bg-[#EFC653]/30 text-[#714f08] font-bold px-1.5 py-0.5 rounded">Stok: ${p.stock || 0}</span>`;
+        }
         return `
           <div class="bg-white rounded-3xl border-2 border-[#E9899F]/30 p-3.5 flex flex-col justify-between retro-shadow">
             <div>
               <div class="w-full aspect-square bg-[#F8EBD8]/60 rounded-2xl flex items-center justify-center text-4xl mb-2">
                 ${p.icon || '🍓'}
               </div>
-              <span class="text-[10px] text-[#8FA477] font-bold block">${p.category}</span>
+              <div class="flex justify-between items-center mb-1">
+                <span class="text-[10px] text-[#8FA477] font-bold block">${p.category}</span>
+                ${stockTag}
+              </div>
               <h4 class="font-bold text-xs line-clamp-1 mb-1">${p.name}</h4>
               <p class="text-[10px] text-stone-500 line-clamp-2">${p.description || ''}</p>
             </div>
@@ -325,7 +398,7 @@
     }
 
     function addSelectedToCart() {
-      if (!currentProd || !currentProd.packages) return;
+      if (!currentProd || !currentProd.packages || currentProd.packages.length === 0) return;
       const pkg = currentProd.packages[selectedPackageIdx];
       cart.push({
         productName: currentProd.name,
@@ -395,30 +468,157 @@
       window.open(`https://wa.me/6285163672392?text=${encodeURIComponent(text)}`, '_blank');
     }
 
-    // Admin Functions
+    // ==========================================
+    // ADMIN EDITOR FORM (MANUAL PRODUCT & PACKAGES)
+    // ==========================================
     function renderAdminTable() {
       const tbody = document.getElementById('admin-table-body');
       tbody.innerHTML = products.map((p, idx) => `
         <tr>
           <td class="p-2.5 font-bold">${p.icon || '🍓'} ${p.name}</td>
           <td class="p-2.5">${p.category}</td>
+          <td class="p-2.5">${p.stock_mode === 'manual' ? (p.stock || 0) : '∞'}</td>
           <td class="p-2.5">${(p.packages || []).length} Paket</td>
-          <td class="p-2.5 text-right">
+          <td class="p-2.5 text-right space-x-2">
+            <button onclick="editProduct(${idx})" class="text-blue-600 font-bold">Edit</button>
             <button onclick="removeProduct(${idx}, '${p.id}')" class="text-red-500 font-bold">Hapus</button>
           </td>
         </tr>
       `).join('');
     }
 
+    function openProductEditor(isEdit = false) {
+      document.getElementById('product-editor-modal').classList.remove('hidden');
+      document.getElementById('package-rows-container').innerHTML = '';
+      if (!isEdit) {
+        document.getElementById('editor-modal-title').textContent = 'Tambah Produk Baru';
+        document.getElementById('edit-prod-id').value = '';
+        document.getElementById('form-name').value = '';
+        document.getElementById('form-icon').value = '🍓';
+        document.getElementById('form-category').value = '';
+        document.getElementById('form-stock-mode').value = 'unlimited';
+        document.getElementById('form-stock-count').value = '0';
+        document.getElementById('form-desc').value = '';
+        toggleStockField();
+        addPackageRow('1 Bulan', 25000);
+      }
+    }
+
+    function closeProductEditor() {
+      document.getElementById('product-editor-modal').classList.add('hidden');
+    }
+
+    function toggleStockField() {
+      const mode = document.getElementById('form-stock-mode').value;
+      const wrap = document.getElementById('form-stock-wrapper');
+      wrap.classList.toggle('hidden', mode !== 'manual');
+    }
+
+    function addPackageRow(nameVal = '', priceVal = '') {
+      const container = document.getElementById('package-rows-container');
+      const div = document.createElement('div');
+      div.className = "flex gap-2 items-center package-row-item";
+      div.innerHTML = `
+        <input type="text" placeholder="Nama Paket (cth: 7 Hari, 1 Bulan, Private)" value="${nameVal}" class="p-2 rounded-xl border flex-1 pkg-name-input" required />
+        <input type="number" placeholder="Harga (Rp)" value="${priceVal}" class="p-2 rounded-xl border w-28 pkg-price-input" required />
+        <button type="button" onclick="this.parentElement.remove()" class="text-red-500 p-1 font-bold">✕</button>
+      `;
+      container.appendChild(div);
+    }
+
+    function editProduct(idx) {
+      const prod = products[idx];
+      if (!prod) return;
+
+      openProductEditor(true);
+      document.getElementById('editor-modal-title').textContent = 'Edit Produk: ' + prod.name;
+      document.getElementById('edit-prod-id').value = prod.id || `idx_${idx}`;
+      document.getElementById('form-name').value = prod.name;
+      document.getElementById('form-icon').value = prod.icon || '🍓';
+      document.getElementById('form-category').value = prod.category;
+      document.getElementById('form-stock-mode').value = prod.stock_mode || 'unlimited';
+      document.getElementById('form-stock-count').value = prod.stock || 0;
+      document.getElementById('form-desc').value = prod.description || '';
+      toggleStockField();
+
+      const container = document.getElementById('package-rows-container');
+      container.innerHTML = '';
+      (prod.packages || []).forEach(pkg => {
+        addPackageRow(pkg.name, pkg.price);
+      });
+      if (!prod.packages || prod.packages.length === 0) {
+        addPackageRow();
+      }
+    }
+
+    async function saveProduct(e) {
+      e.preventDefault();
+      const editId = document.getElementById('edit-prod-id').value;
+      const name = document.getElementById('form-name').value.trim();
+      const icon = document.getElementById('form-icon').value.trim() || '🍓';
+      const category = document.getElementById('form-category').value.trim();
+      const stock_mode = document.getElementById('form-stock-mode').value;
+      const stock = stock_mode === 'manual' ? (parseInt(document.getElementById('form-stock-count').value) || 0) : 0;
+      const description = document.getElementById('form-desc').value.trim();
+
+      const packages = [];
+      document.querySelectorAll('.package-row-item').forEach(row => {
+        const pName = row.querySelector('.pkg-name-input').value.trim();
+        const pPrice = parseFloat(row.querySelector('.pkg-price-input').value) || 0;
+        if (pName) {
+          packages.push({ name: pName, price: pPrice });
+        }
+      });
+
+      if (packages.length === 0) {
+        alert('Minimal buat 1 varian paket!');
+        return;
+      }
+
+      const payload = {
+        name,
+        icon,
+        category,
+        stock_mode,
+        stock,
+        description,
+        packages
+      };
+
+      if (editId && !editId.startsWith('idx_')) {
+        // Update di Supabase
+        if (sb) {
+          await sb.from('products').update(payload).eq('id', editId);
+        }
+        const index = products.findIndex(p => p.id === editId);
+        if (index !== -1) products[index] = { ...products[index], ...payload };
+      } else {
+        // Insert Baru
+        if (sb) {
+          const { data } = await sb.from('products').insert([payload]).select();
+          if (data && data[0]) payload.id = data[0].id;
+        }
+        products.unshift(payload);
+      }
+
+      localStorage.setItem('my_products', JSON.stringify(products));
+      closeProductEditor();
+      renderAdminTable();
+      renderCategories();
+      renderProductCards();
+      alert('Produk dan seluruh varian paket berhasil disimpan! 🍓');
+    }
+
     async function removeProduct(idx, id) {
       if (confirm('Hapus produk ini?')) {
-        if (sb && id && id !== 'undefined') {
+        if (sb && id && id !== 'undefined' && !id.startsWith('idx_')) {
           await sb.from('products').delete().eq('id', id);
         }
         products.splice(idx, 1);
         localStorage.setItem('my_products', JSON.stringify(products));
         renderAdminTable();
         renderCategories();
+        renderProductCards();
       }
     }
 
@@ -444,11 +644,14 @@
             category: item.category,
             icon: item.icon || '🍓',
             description: item.description || '',
+            stock_mode: item.stock_mode || 'unlimited',
+            stock: item.stock || 0,
             packages: item.packages || []
           };
 
           if (sb) {
-            await sb.from('products').insert([payload]);
+            const { data } = await sb.from('products').insert([payload]).select();
+            if (data && data[0]) payload.id = data[0].id;
           }
           products.unshift(payload);
         }
@@ -462,29 +665,6 @@
       } catch (e) {
         alert('Format JSON salah. Pastikan formatnya sudah benar!');
       }
-    }
-
-    async function openNewProductPopup() {
-      const name = prompt('Nama Produk:');
-      if (!name) return;
-      const cat = prompt('Kategori (cth: Streaming & TV):', 'Streaming & TV');
-      const price = prompt('Harga Paket Standar (cth: 25000):', '25000');
-
-      const newProd = {
-        name: name,
-        category: cat || 'Umum',
-        icon: '🍓',
-        packages: [{ name: 'Standar 1 Bulan', price: parseInt(price) || 20000 }]
-      };
-
-      if (sb) {
-        await sb.from('products').insert([newProd]);
-      }
-      products.unshift(newProd);
-      localStorage.setItem('my_products', JSON.stringify(products));
-      renderAdminTable();
-      renderCategories();
-      renderProductCards();
     }
   </script>
 </body>
